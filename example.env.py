@@ -1,0 +1,11 @@
+DEBUG = True
+
+OPENAI_API_KEY = 'your-open-ai-key'
+OPENAI_MODEL = 'your-openai-model'
+OPENAI_API_BASE_URL = ''
+
+ADMIN_USER_PASSWORD = ''
+ADMIN_USER_TOKEN = ''
+
+POSTGRES_PASSWORD = ''
+POSTGRES_PORT = ''
