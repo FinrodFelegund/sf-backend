@@ -15,8 +15,36 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+
+from rest_framework.routers import DefaultRouter
+from user.urls import api_router as user_api_router
+from user.urls import auth_urlpatterns
+from drf_spectacular.views import SpectacularAPIView
+
+api_router = DefaultRouter()
+
+api_routers = [
+    user_api_router,
+]
+
+
+for router in api_routers:
+    api_router.registry.extend(router.registry)
+
+
+api_router.urls.extend(
+    [
+        path('schema/', SpectacularAPIView.as_view(), name='schema')
+    ]
+)
+
+admin.site.site_header = 'Storyfinder Backend - Admin'
+admin.site.site_title = 'Storyfinder Backend - Admin'
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api-auth/', include('rest_framework.urls')),
+    path('api/v1/', include(api_router.urls)),
+    path('api/v1/', include(auth_urlpatterns)),
 ]

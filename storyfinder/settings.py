@@ -24,6 +24,9 @@ LOG_DIR = DATA_DIR / 'logs/django'
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-$b+o#d&_e!@i__2+z7y*7-01e=^a1f_!rxv3yw1$#)ln^6-=da'
+CORS_ALLOW_CREDENTIALS = True
+ALLOWED_HOSTS = ['localhost']
+CORS_ALLOWED_ORIGINS = ['chrome-extension://bmbjbkciidoennpdnnepgikbkmjfkoio']
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -52,6 +55,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -85,6 +89,7 @@ CACHES = {
     }
 }
 
+
 REST_KNOX = {
     'SECURE_HASH_ALGORITHM': 'hashlib.sha512',
     'AUTH_TOKEN_CHARACTER_LENGTH': 64,
@@ -96,9 +101,11 @@ REST_KNOX = {
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+AUTH_USER_MODEL = 'user.CustomUser'
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.contrib.gis.backends.postgis',
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',
         'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': env.POSTGRES_PASSWORD,
@@ -147,5 +154,35 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
-
+    # Require authentication by default for all endpoints.
+    # Individual views can override this with AllowAny where needed (e.g. login).
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'knox.auth.TokenAuthentication',  # must be set. Otherwise, drf would not return 401, but 403
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'PAGE_SIZE': 100,
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '200/day',
+        'user': '3000/day',
+        'login': '30/minute',
+    },
 }
+
+
+CSRF_TRUSTED_ORIGINS = ['chrome-extension://bmbjbkciidoennpdnnepgikbkmjfkoio']
+
+SECURE_HSTS_SECONDS = 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
+SECURE_HSTS_PRELOAD = False
+SILENCED_SYSTEM_CHECKS = [
+    'security.W008',  # because we use a reverse-proxy
+]

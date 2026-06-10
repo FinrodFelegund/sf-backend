@@ -1,5 +1,7 @@
 from django.contrib.auth.models import update_last_login
 from knox.models import AuthToken
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.utils.decorators import method_decorator
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -18,6 +20,13 @@ from user.serializer import (
 )
 
 # Create your views here.
+
+class CSRFTokenView(APIView):
+    permission_classes = [AllowAny]
+
+    @method_decorator(ensure_csrf_cookie)
+    def get(self, request):
+        return Response({'detail': 'CSRF Token set successfully'})
 
 class LoginRateThrottle(AnonRateThrottle):
     scope = 'login'

@@ -43,23 +43,23 @@ class UserSetupService():
                 if username == 'admin':
                     AuthToken.objects.get_or_create(user=admin)
 
-            users_to_create = [
-                ('John_Doe', 'John', 'Doe'),
-                ('Sarah_Parker', 'Sarah', 'Parker'),
-            ]
+        users_to_create = [
+            ('John_Doe', 'John', 'Doe'),
+            ('Sarah_Parker', 'Sarah', 'Parker'),
+        ]
 
-            for username, first_name, last_name in users_to_create:
-                user, created = User.objects.get_or_create(
-                    username=username,
-                    defaults={
-                        'email': f'{username}@storyfinder.usr',
-                        'fist_name': first_name,
-                        'last_name': last_name,
-                    },
-                )
-                
-                if created:
-                    user.set_password(self.test_password)
-                    user.save()
+        for username, first_name, last_name in users_to_create:
+            user, created = User.objects.get_or_create(
+                username=username,
+                defaults={
+                    'email': f'{username}@storyfinder.usr',
+                    'first_name': first_name,
+                    'last_name': last_name,
+                },
+            )
+            
+            if created:
+                user.set_password(self.test_password)
+                user.save()
 
-            return len(admins_to_create) + len(users_to_create)
+        return len(admins_to_create) + len(users_to_create)
