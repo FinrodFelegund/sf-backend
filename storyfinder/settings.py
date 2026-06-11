@@ -26,7 +26,7 @@ LOG_DIR = DATA_DIR / 'logs/django'
 SECRET_KEY = 'django-insecure-$b+o#d&_e!@i__2+z7y*7-01e=^a1f_!rxv3yw1$#)ln^6-=da'
 CORS_ALLOW_CREDENTIALS = True
 ALLOWED_HOSTS = ['localhost']
-CORS_ALLOWED_ORIGINS = ['chrome-extension://bmbjbkciidoennpdnnepgikbkmjfkoio']
+CORS_ALLOWED_ORIGINS = ['chrome-extension://lhlclfoenmbnghjpiajilbebohmadabo']
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -176,7 +176,7 @@ REST_FRAMEWORK = {
 }
 
 
-CSRF_TRUSTED_ORIGINS = ['chrome-extension://bmbjbkciidoennpdnnepgikbkmjfkoio']
+CSRF_TRUSTED_ORIGINS = ['chrome-extension://lhlclfoenmbnghjpiajilbebohmadabo']
 
 SECURE_HSTS_SECONDS = 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False

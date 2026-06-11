@@ -1,6 +1,8 @@
 env.py
 /database/docker.env
 **/docker.env
+/data/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
