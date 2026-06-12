@@ -50,6 +50,8 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'knox',
     'user.apps.UserConfig',
+    'graph.apps.GraphConfig',
+    'web.apps.WebConfig',
 ]
 
 MIDDLEWARE = [
