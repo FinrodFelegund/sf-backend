@@ -22,6 +22,8 @@ from user.urls import api_router as user_api_router
 from user.urls import auth_urlpatterns
 from graph.urls import api_router as graph_api_router
 from graph.urls import graph_urlpatterns
+from chat.urls import api_router as chat_api_router
+from chat.urls import chat_urlpatterns
 from drf_spectacular.views import SpectacularAPIView
 
 api_router = DefaultRouter()
@@ -29,6 +31,7 @@ api_router = DefaultRouter()
 api_routers = [
     user_api_router,
     graph_api_router,
+    chat_api_router,
 ]
 
 
@@ -50,5 +53,6 @@ urlpatterns = [
     path('api-auth/', include('rest_framework.urls')),
     path('api/v1/', include(api_router.urls)),
     path('api/v1/', include(auth_urlpatterns)),
-    path('api/v1/', include(graph_urlpatterns))
+    path('api/v1/', include(graph_urlpatterns)),
+    path('api/v1/', include(chat_urlpatterns))
 ]

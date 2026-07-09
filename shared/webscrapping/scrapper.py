@@ -1,4 +1,4 @@
-import trafilatura
+import trafilatura 
 
 class Scrapper():
     
@@ -6,4 +6,8 @@ class Scrapper():
         self._html_content = html_content
 
     def __call__(self):
-        return trafilatura.extract(self._html_content)
+        result = trafilatura.extract(self._html_content)
+        if not result:
+            return ''
+        
+        return result

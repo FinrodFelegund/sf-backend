@@ -7,7 +7,7 @@ services:
     ports:
       - "127.0.0.1:${HOST_PORT}:5432"
     env_file:
-      - ./docker.env
+      - docker.env
     volumes:
       - dani-db-data:/var/lib/postgresql/data
     restart: unless-stopped

@@ -13,11 +13,24 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import env
+from typing import Optional, Union
+import os
+
+def get_from_env(key: str, default: Optional[Union[str, bool]] = None):
+    if key in os.environ:
+        return os.environ[key]
+    
+    if not default:
+        return None
+
+    return default
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / 'data'
+DATA_DIR = BASE_DIR / 'django_data'
 LOG_DIR = DATA_DIR / 'logs/django'
+
+SYSTEM_DATA_DIR = BASE_DIR / 'data'
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
@@ -29,7 +42,17 @@ ALLOWED_HOSTS = ['localhost']
 CORS_ALLOWED_ORIGINS = ['chrome-extension://lhlclfoenmbnghjpiajilbebohmadabo']
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = get_from_env('DEBUG', env.DEBUG)
+OPENAI_API_KEY = get_from_env('OPENAI_API_KEY', env.OPENAI_API_KEY)
+OPENAI_MODEL = get_from_env('OPENAI_MODEL', env.OPENAI_MODEL)
+OPENAI_BASE_URL = get_from_env('OPENAI_BASE_URL', env.OPENAI_API_BASE_URL)
+ADMIN_USER_PASSWORD = get_from_env('ADMIN_USER_PASSWORD', env.ADMIN_USER_PASSWORD)
+ADMIN_USER_TOKEN = get_from_env('ADMIN_USER_TOKEN', env.ADMIN_USER_TOKEN)
+TEST_USER_PASSWORD = get_from_env('TEST_USER_PASSWORD', env.TEST_USER_PASSWORD)
+
+POSTGRES_PASSWORD = get_from_env('POSTGRES_PASSWORD', env.POSTGRES_PASSWORD)
+POSTGRES_PORT = get_from_env('POSTGRES_PORT', env.POSTGRES_PORT)
+
 
 ALLOWED_HOSTS = []
 
@@ -51,6 +74,7 @@ INSTALLED_APPS = [
     'knox',
     'user.apps.UserConfig',
     'graph.apps.GraphConfig',
+    'chat.apps.ChatConfig',
     'web.apps.WebConfig',
 ]
 
@@ -110,9 +134,9 @@ DATABASES = {
         'ENGINE': 'django.contrib.gis.db.backends.postgis',
         'NAME': 'postgres',
         'USER': 'postgres',
-        'PASSWORD': env.POSTGRES_PASSWORD,
+        'PASSWORD': POSTGRES_PASSWORD,
         'HOST': 'localhost',
-        'PORT': env.POSTGRES_PORT,
+        'PORT': POSTGRES_PORT,
     }
 }
 

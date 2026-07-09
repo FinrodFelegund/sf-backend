@@ -1,17 +1,18 @@
 from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import  IsAuthenticated
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
 from graph.serializers import GraphRequestSerializer
 from rest_framework import status
 
 from shared.webscrapping.scrapper import Scrapper
+from shared.entityrecognition.ner import NERPipeline
 from web.models import Website
 
 # Create your views here.
 
 class GraphViewSet(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=GraphRequestSerializer,
@@ -26,9 +27,12 @@ class GraphViewSet(APIView):
         url = message['url']
         scrapper = Scrapper(message['text'])
         text = scrapper()
-        print(message['text'])
         website, created = Website.objects.get_or_create(url=url, content=text)
+        pipe = NERPipeline(text)
+        output = pipe()
 
+        print(output)
+       
 
 
         return Response(
