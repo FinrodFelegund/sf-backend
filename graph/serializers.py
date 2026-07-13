@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
 class GraphRequestSerializer(serializers.Serializer):
-    url = serializers.CharField()
     text = serializers.CharField()
+    url = serializers.CharField()
 
     def validate(self, attrs):
         url = attrs.get('url')
@@ -16,4 +16,16 @@ class GraphRequestSerializer(serializers.Serializer):
             'text': text,
         }
 
+        return attrs
+    
+class GraphResponseSerializer(serializers.Serializer):
+    entities = serializers.JSONField()
+
+    def validate(self, attrs):
+        ents = attrs['entites']
+        sents = attrs['sentences']
+
+        if not ents or not sents:
+            raise serializers.ValidationError('Graph response is invalid')
+        
         return attrs

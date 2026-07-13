@@ -66,16 +66,15 @@ class ChatStreamViewSet(APIView):
 
     @extend_schema(request=ChatRequestSerializer, description='Ask a question about the website, streamed as SSE')
     def post(self, request):
-        print(request.data.keys())
         serializer = ChatRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
         website = get_or_refresh_website(request.user, data['url'], data['text'])
         summary = self._get_or_create_summary(website)
-        chat_history = self._get_or_create_history(request.user, website, data.get('chat_history_id'))
+        chat_history, created = ChatHistory.objects.get_or_create(user=request.user, website=website)
         history_for_llm = list(chat_history.messages)
-        chat_history.messages.append({'role': 'user', 'content': data['content']})
+        chat_history.messages.append({'role': 'user', 'content': data['content'], 'timestamp': data['timestamp']})
         chat_history.save(update_fields=['messages', 'updated_at'])
 
         response = StreamingHttpResponse(
@@ -98,9 +97,9 @@ class ChatStreamViewSet(APIView):
         return website.summary
     
     @staticmethod
-    def _get_or_create_history(user, website, chat_history_id):
-        if chat_history_id:
-            return get_object_or_404(ChatHistory, id=chat_history_id, user=user, website=website)
+    def _get_or_create_history(user, website, url):
+        if url:
+            return get_object_or_404(ChatHistory, user=user, website=website)
         
         return ChatHistory.objects.create(user=user, website=website)
     

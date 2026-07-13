@@ -1,0 +1,13 @@
+{
+    "eng": {
+        "chat": "Answer the question about the text you are passed as context truthfully. If the Information is not present in the text, you have to answer, that the information seeked can not be given based on the information provided. {summary}",
+        "summary": "Summarize the followin text very generously. You may only output words related to the text. Omit any output, which relates to your task. Only output a summary.",
+        "graph": ""
+    },
+
+    "ger": {
+        "chat": "Answer the question about the text you are passed as context truthfully. If the Information is not present in the text, you have to answer, that the information seeked can not be given based on the information provided. {summary}",
+        "summary": "Summarize the followin text",
+        "graph": ""
+    }
+}
