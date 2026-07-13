@@ -63,11 +63,10 @@ class OpenAIClient:
     def build_chat_prompt(self, summary: str, history_for_llm: List[Dict], data: str):
         prompt = self.get_active_prompt(prompt_type=PromptType('chat'), lang=PromptLanguage('eng'))
         messages = [
-            {'role': 'assistant', 'content': prompt.format(summary=summary)}
+            {'role': 'system', 'content': prompt.format(summary=summary)}
         ]
         messages.extend(history_for_llm)
         messages.append({'role': 'user', 'content': data})
-        print(messages)
         return messages
 
     def response(self, messages: List[Dict], model: str | None = None):
@@ -81,7 +80,7 @@ class OpenAIClient:
     def build_summary_prompt(self, website: Website):
         prompt = self.get_active_prompt(prompt_type=PromptType('summary'), lang=PromptLanguage('eng'))
         messages = [
-            {'role': 'assistant', 'content': prompt},
+            {'role': 'system', 'content': prompt},
             {'role': 'user', 'content': website.content}]
         
         return messages

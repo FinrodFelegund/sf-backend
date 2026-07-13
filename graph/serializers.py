@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from web.serializers import EntitySerializer, RelationSerializer
 
 class GraphRequestSerializer(serializers.Serializer):
     text = serializers.CharField()
@@ -16,16 +17,9 @@ class GraphRequestSerializer(serializers.Serializer):
             'text': text,
         }
 
-        return attrs
-    
+        return attrs    
+
+
 class GraphResponseSerializer(serializers.Serializer):
-    entities = serializers.JSONField()
-
-    def validate(self, attrs):
-        ents = attrs['entites']
-        sents = attrs['sentences']
-
-        if not ents or not sents:
-            raise serializers.ValidationError('Graph response is invalid')
-        
-        return attrs
+    nodes = EntitySerializer(many=True)
+    links = RelationSerializer(many=True)

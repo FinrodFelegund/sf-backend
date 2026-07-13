@@ -54,10 +54,10 @@ class Sentence(BaseModel):
 class Entity(BaseModel):
     class EntityType(models.TextChoices):
         PERSON = 'PERSON', 'Person'
-        ORG = 'ORG', 'Organization'
-        GPE = 'GPE', 'Country/City/State'
-        LOC = 'LOC', 'Location'
-        NORP = 'NORP', 'Nationality/Religious/Political group'
+        ORG    = 'ORG', 'Organization'
+        GPE    = 'GPE', 'Country/City/State'
+        LOC    = 'LOC', 'Location'
+        NORP   = 'NORP', 'Nationality/Religious/Political group'
 
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='entities')
     entity_name = models.CharField(max_length=255)
