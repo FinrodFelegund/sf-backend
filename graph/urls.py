@@ -5,5 +5,5 @@ from .views import GraphViewSet
 api_router = DefaultRouter()
 
 graph_urlpatterns = [
-    path('graph/', GraphViewSet.as_view(), name='graph'),
+    path('graph', GraphViewSet.as_view(), name='graph'),
 ]

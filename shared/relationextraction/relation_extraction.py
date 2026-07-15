@@ -19,7 +19,7 @@ class RelationExtraction:
     def _get_candidate_sentences(self):
         return list(
             Sentence.objects.filter(website=self.website)
-            .annotate(entitiy_count=Count('entities'))
+            .annotate(entity_count=Count('entities'))
             .filter(entity_count__gte=2)
             .prefetch_related('entities')
         )
@@ -66,7 +66,7 @@ class RelationExtraction:
         if not raw:
             return []
         # strip all the stuff away the modle might have haded like md tags etcc
-        cleaned = re.sub(r'```(?json)?\s*|\s*```', '', raw.strip())
+        cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
@@ -109,27 +109,25 @@ class RelationExtraction:
                 'id': relation.id,
                 'sentence': sentence.text,
                 'relation_type': relation_type.label,
-                'entity1': e1.id,
-                'entity2': e2.id,
+                'source': str(e1.id),
+                'target': str(e2.id),
             })
 
         return links
 
 
-    def stream(self): 
+    def stream(self):
         sentences = self._get_candidate_sentences()
         payload, sentences_by_id, entities_by_sentence = self._build_payload(sentences)
-        links = []
         if not payload:
-            return []
+            return
         
         for i in range(0, len(payload), _BATCH_SIZE):
-            batch_size = _BATCH_SIZE if i + _BATCH_SIZE <= len(payload) else len(payload) - i 
-            batch = payload[i:i+batch_size]
-            raw = self.client.response(messages=self._build_messages(batch))
+            batch = payload[i:i+_BATCH_SIZE]
+            raw = self.client.response(messages=self._build_message(batch))
             extracted = self._parse_response(raw)
-            links.extend(self._persist(extracted, sentences_by_id, entities_by_sentence))
-            yield links
+            yield self._persist(extracted, sentences_by_id, entities_by_sentence)
+   
 
 
     def respond(self):

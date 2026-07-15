@@ -1,7 +1,6 @@
 import spacy
 from langdetect import detect
 
-import json
 from functools import lru_cache
 
 _EXCLUDED_COMPONENTS = ['tagger', 'parser', 'attribute_ruler', 'lemmatizer', 'morphologizer']

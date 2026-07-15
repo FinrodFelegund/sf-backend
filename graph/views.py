@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import  IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import NotFound
 from drf_spectacular.utils import extend_schema
 from graph.serializers import GraphRequestSerializer, GraphResponseSerializer
 
@@ -10,6 +11,7 @@ from shared.webscrapping.scrapper import Scrapper
 from shared.entityrecognition.ner import NERPipeline
 from shared.relationextraction.relation_extraction import RelationExtraction
 from web.models import Website, Sentence, Entity, WebsiteEntity, Relation, RelationType
+from django.db.models import Prefetch
 
 import json
 # Create your views here.
@@ -22,14 +24,6 @@ class GraphViewSet(APIView):
         responses=GraphRequestSerializer,
         description='Request to create a new graph object for a specific website'
     )
-
-
-    def _extract_from_text(self):
-        pass
-
-    def __extract_from_db(self):
-        pass
-
     def post(self, request):
         serializer = GraphRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -73,7 +67,7 @@ class GraphViewSet(APIView):
                 sent = sents[i]
                 ent.sentences.add(sent)
 
-            nodes.append({'id': ent.id, 'label': ent.entity_type, 'caption': ent.entity_name})
+            nodes.append({'id': str(ent.id), 'label': ent.entity_type, 'caption': ent.entity_name})
 
             website_ent, created = WebsiteEntity.objects.get_or_create(website=website, entity=ent)
             if created:
@@ -95,10 +89,62 @@ class GraphViewSet(APIView):
 
         try:
             for links in extractor.stream():
-                yield f'data: {json.dumps({'type': 'links', 'links': links})}'
+                yield f'data: {json.dumps({'type': 'links', 'links': links})}\n\n'
 
         except Exception as e:
-            yield f'data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n'
+            raise RuntimeError(str(e))
         
         finally:
             yield 'data: [DONE]\n\n'
+
+    @extend_schema(
+        request=GraphRequestSerializer,
+        description='Retrieve a graph for the given website, if it exsits'
+    )
+    def get(self, request):
+        print(request.query_params.dict())
+        serializer = GraphRequestSerializer(data=request.query_params.dict())
+        serializer.is_valid(raise_exception=True)
+        msg = serializer.validated_data['msg']
+        url = msg['url']
+        
+        
+        try:
+            website = Website.objects.get(url=url, user=request.user)
+        except Website.DoesNotExist:
+            return Response({'nodes': [], 'links': []})
+        
+        nodes = [
+            {
+                'id': str(ent.id),
+                'label': ent.entity_type,
+                'caption': ent.entity_name
+             }
+            for ent in Entity.objects.filter(websites=website, user=request.user)
+        ]
+
+        website_sentences = Sentence.objects.filter(website=website)
+        relations = (
+            Relation.objects
+            .filter(user=request.user, sentences__website=website)
+            .distinct()
+            .select_related('relation_type', 'entity1', 'entity2')
+            .prefetch_related(Prefetch('sentences', queryset=website_sentences, to_attr='website_sentences'))
+        )
+
+        links = [
+            {
+                'source': str(rel.entity1.id),
+                'target': str(rel.entity2.id),
+                'relation_type': rel.relation_type.label,
+                'sentences': [
+                    {
+                        'id': (str(s.id)), 'text': s.text
+                    }
+                    for s in rel.website_sentences
+                ]
+            }
+            for rel in relations
+        ]
+
+        return Response({'nodes': nodes, 'links': links})

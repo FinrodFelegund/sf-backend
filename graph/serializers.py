@@ -2,14 +2,14 @@ from rest_framework import serializers
 from web.serializers import EntitySerializer, RelationSerializer
 
 class GraphRequestSerializer(serializers.Serializer):
-    text = serializers.CharField()
+    text = serializers.CharField(required=False, allow_blank=True, default='')
     url = serializers.CharField()
 
     def validate(self, attrs):
-        url = attrs.get('url')
-        text = attrs.get('text')
-
-        if not url or not text:
+        print("In graph request serializer")
+        url = attrs.get('url', "")
+        text = attrs.get('text', "")
+        if len(url) == 0 and len(text) == 0:
             raise serializers.ValidationError('Graph request is invalid')
         
         attrs['msg'] = {
@@ -17,7 +17,7 @@ class GraphRequestSerializer(serializers.Serializer):
             'text': text,
         }
 
-        return attrs    
+        return attrs
 
 
 class GraphResponseSerializer(serializers.Serializer):
