@@ -15,18 +15,18 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
-
+from django.urls import include, path
+from drf_spectacular.views import SpectacularAPIView
 from rest_framework.routers import DefaultRouter
-from user.urls import api_router as user_api_router
-from user.urls import auth_urlpatterns
-from graph.urls import api_router as graph_api_router
-from graph.urls import graph_urlpatterns
+
 from chat.urls import api_router as chat_api_router
 from chat.urls import chat_urlpatterns
+from graph.urls import api_router as graph_api_router
+from graph.urls import graph_urlpatterns
+from user.urls import api_router as user_api_router
+from user.urls import auth_urlpatterns
 from web.urls import api_router as web_api_router
 from web.urls import web_urlpatterns
-from drf_spectacular.views import SpectacularAPIView
 
 api_router = DefaultRouter()
 

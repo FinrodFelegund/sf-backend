@@ -1,6 +1,6 @@
 import spacy
 from langdetect import detect
-
+import re
 from functools import lru_cache
 
 _EXCLUDED_COMPONENTS = ['tagger', 'parser', 'attribute_ruler', 'lemmatizer', 'morphologizer']
@@ -35,6 +35,15 @@ class NERPipeline:
         lang = detect(sample) if sample else 'en'
         return 'en' if lang.startswith('en') else 'de'
     
+    def normalize_entity(self, text: str) -> str:
+        if not text:
+            return ''
+        t = text.strip()
+        t = re.sub(r"^[\s'\"()\[\]{}/\\-]+", '', t)
+        t = re.sub(r"[\s'\"()\[\]{}/\\.,;:!?-]+$", '', t)
+        t = re.sub(r"\s+", ' ', t)
+        return t.strip()
+    
     def _extract(self, nlp: spacy.Language):
         doc = nlp(self._document)
         entities: dict[str, str] = {}
@@ -48,7 +57,7 @@ class NERPipeline:
                 if entry is None:
                     entities[ent.text] = {
                         'label': ent.label_,
-                        'caption': ent.text,
+                        'caption': self.normalize_entity(ent.text),
                         'count': 1,
                         'sent_idx': [sent_idx],
                     }

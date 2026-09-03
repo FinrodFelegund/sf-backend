@@ -1,14 +1,21 @@
 import hashlib
-from django.db import models
+
 from django.conf import settings
-from user.models import CustomUser
+from django.db import models
+
 from storyfinder.models import BaseModel
+from user.models import CustomUser
 
 
 # Create your models here.
 class Website(BaseModel):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='websites')
     url = models.TextField(help_text='URL of the website')
+    title = models.TextField(
+        blank=True,
+        default='',
+        help_text='Page title, used to label this source in the graph UI'
+    )
     content = models.TextField(help_text='Scraped and normalized content of the website')
     content_hash = models.CharField(
         max_length=64,
@@ -50,6 +57,9 @@ class Sentence(BaseModel):
     def __str__(self):
         return f'{self.website.url}: {self.text[:50]}'
     
+class Origin(models.TextChoices):
+    PIPELINE = 'PIPELINE', 'Extracted'
+    MANUAL = 'MANUAL', 'User added'
 
 class Entity(BaseModel):
     class EntityType(models.TextChoices):
@@ -81,6 +91,9 @@ class WebsiteEntity(BaseModel):
     website = models.ForeignKey(Website, on_delete=models.CASCADE)
     entity = models.ForeignKey(Entity, on_delete=models.CASCADE)
     count = models.PositiveSmallIntegerField(default=1)
+    origin = models.CharField(
+        max_length=10, choices=Origin.choices, default=Origin.PIPELINE
+    )
 
     class Meta:
         constraints = [
@@ -110,17 +123,21 @@ class RelationType(BaseModel):
 
 
 class Relation(BaseModel):
+    websites = models.ManyToManyField(Website, related_name='relations')
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='relations')
     entity1 = models.ForeignKey(Entity, on_delete=models.CASCADE, related_name='relations_as_first')
     entity2 = models.ForeignKey(Entity, on_delete=models.CASCADE, related_name='relations_as_second')
+    origin = models.CharField(
+        max_length=10, choices=Origin.choices, default=Origin.PIPELINE
+    )
     relation_type = models.ForeignKey(RelationType, on_delete=models.CASCADE, null=True, blank=True)
     sentences = models.ManyToManyField(Sentence, related_name='relations')
 
     class Meta:
-        ordering = ['user', 'entity1', 'entity2']
+        ordering = ['user', 'entity1', 'entity2']  # noqa: RUF012
         verbose_name = 'Relation'
         verbose_name_plural = 'Relations'
-        constraints = [
+        constraints = [  # noqa: RUF012
             models.UniqueConstraint(
                 fields=['user', 'entity1', 'entity2', 'relation_type'], name='unique_relation_per_user'
             ),

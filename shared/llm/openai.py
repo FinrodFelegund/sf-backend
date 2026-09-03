@@ -1,9 +1,17 @@
-from openai import OpenAI
-from functools import lru_cache
-from storyfinder.settings import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, VIRTUAL_KEY
-from chat.models import Website, ChatHistory, ChatSystemPrompt
-from typing import List, Dict
 from enum import Enum
+from functools import lru_cache
+
+from openai import OpenAI
+
+from chat.models import ChatSystemPrompt, Website
+from shared.llm.citation import CITATION_INSTRUCTION
+from storyfinder.settings import (
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+    OPENAI_MODEL,
+    VIRTUAL_KEY,
+)
+
 
 class PromptType(Enum):
     CHAT = 'chat'
@@ -47,7 +55,7 @@ class OpenAIClient:
             raise ValueError(f'No prompt for prompt type {prompt_type} and language {lang} found')
         return prompt.content
 
-    def stream(self, messages: List[Dict], model: str | None = None):
+    def stream(self, messages: list[dict], model: str | None = None):
         model = model or self.model
 
         stream = self.client.chat.completions.create(model=model, messages=messages, stream=True)
@@ -62,16 +70,18 @@ class OpenAIClient:
             if content:
                 yield content
 
-    def build_chat_prompt(self, summary: str, history_for_llm: List[Dict], data: str):
+    def build_chat_prompt(self, page_text: str, history_for_llm: list[dict], data: str):
         prompt = self.get_active_prompt(prompt_type=PromptType('chat'), lang=PromptLanguage('eng'))
         messages = [
-            {'role': 'system', 'content': prompt.format(summary=summary)}
+            {'role': 'system', 'content': prompt.format(summary=page_text) + CITATION_INSTRUCTION}
         ]
-        messages.extend(history_for_llm)
+        messages.extend({'role': m['role'], 'content': m['content']}
+                for m in history_for_llm
+                if m.get('role') and m.get('content'))
         messages.append({'role': 'user', 'content': data})
         return messages
 
-    def response(self, messages: List[Dict], model: str | None = None):
+    def response(self, messages: list[dict], model: str | None = None):
         model = model or self.model
         response = self.client.chat.completions.create(model=model, messages=messages)
 

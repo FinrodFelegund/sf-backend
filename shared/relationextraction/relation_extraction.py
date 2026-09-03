@@ -1,6 +1,6 @@
-import json, re
 from typing import Dict, List
-
+import json
+import re
 from django.db.models import Count
 
 from shared.llm.openai import get_openai_client, PromptType, PromptLanguage
@@ -104,10 +104,12 @@ class RelationExtraction:
                 relation_type=relation_type,
             )
 
+            relation.websites.add(self.website)
             relation.sentences.add(sentence)
+            sentences = relation.sentences.all()
             links.append({
                 'id': relation.id,
-                'sentence': sentence.text,
+                'sentences': [sent.text for sent in sentences],
                 'relation_type': relation_type.label,
                 'source': str(e1.id),
                 'target': str(e2.id),

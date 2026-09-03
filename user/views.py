@@ -55,8 +55,10 @@ class LoginView(APIView):
         description='Login with username and password, returns authentication token',
     )
     def post(self, request):
+        print(request.data)
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        print('Success')
         user = serializer.validated_data['user']
 
         update_last_login(None, user)

@@ -1,18 +1,24 @@
-from rest_framework import mixins, viewsets, status
-from rest_framework.permissions import IsAuthenticated
-from django.http import StreamingHttpResponse
-from rest_framework.response import Response
-
-from chat.models import ChatHistory
-from chat.serializers import ChatHistorySerializer, ChatRequestSerializer, ChatHistoryLookupSerializer
-from shared.llm.openai import get_openai_client
-from web.services.service import get_or_refresh_website
-from web.models import Website
-
 import json
+import re
+
+from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
+from rest_framework import mixins, status, viewsets
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from chat.models import ChatHistory
+from chat.serializers import (
+    ChatHistoryLookupSerializer,
+    ChatHistorySerializer,
+    ChatRequestSerializer,
+)
+from shared.llm.citation import CITATION_SENTINEL
+from shared.llm.openai import get_openai_client
+from web.models import Website
+from web.services.service import get_or_refresh_website
 
 # Create your views here.
 
@@ -78,7 +84,7 @@ class ChatStreamViewSet(APIView):
         chat_history.save(update_fields=['messages', 'updated_at'])
 
         response = StreamingHttpResponse(
-            self._stream_answer(chat_history, summary, history_for_llm, data),
+            self._stream_answer(chat_history, website.content, history_for_llm, data),
             content_type='text/event-stream'
         )
 
@@ -103,19 +109,94 @@ class ChatStreamViewSet(APIView):
         
         return ChatHistory.objects.create(user=user, website=website)
     
-    def _stream_answer(self, chat_history, summary, history_for_llm, data):
-        chunks = []
+    def _stream_answer(self, chat_history, page_text, history_for_llm, data):
         client = get_openai_client()
-        messages = client.build_chat_prompt(summary, history_for_llm, data['content'])
+        messages = client.build_chat_prompt(page_text, history_for_llm, data['content'])
+
+        buffer = ''
+        answer_parts = []
+        sources_raw = ''
+        in_sources = False
+        hold = len(CITATION_SENTINEL) - 1
+
         try:
             for chunk in client.stream(messages=messages):
-                chunks.append(chunk)
-                yield f'data: {json.dumps({"content": chunk})}\n\n'
+                if in_sources:
+                    sources_raw += chunk
+                    continue
+                
+                buffer += chunk
+                idx = buffer.find(CITATION_SENTINEL)
+
+                if idx != -1:
+                    emit = buffer[:idx]
+                    sources_raw = buffer[idx + len(CITATION_SENTINEL):]
+                    in_sources = True
+                    buffer = ''
+                else:
+                    emit = buffer[:-hold] if len(buffer) > hold else ''
+                    buffer = buffer[len(emit):]
+
+                if emit:
+                    answer_parts.append(emit)
+                    yield f'data: {json.dumps({"content": emit})}\n\n'
+
+            if not in_sources and buffer:
+                answer_parts.append(buffer)
+                yield f'data: {json.dumps({'content': buffer})}\n\n'
+
         except Exception as e:
             raise RuntimeError(str(e))
         finally:
-            answer = ''.join(chunks)
+            answer = ''.join(answer_parts).rstrip()
+            citations = self._verify_citations(sources_raw, page_text)
+
             if answer:
-                chat_history.messages.append({'role': 'assistant', 'content': answer, 'timestamp': data['timestamp']})
+                chat_history.messages.append({
+                    'role': 'assistant',
+                    'content': answer,
+                    'timestamp': data['timestamp'],
+                    'citations': citations,
+                })
                 chat_history.save(update_fields=['messages', 'updated_at'])
+            
+            yield f'data: {json.dumps({'citations': citations})}\n\n'
             yield 'data: [DONE]\n\n'
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        return re.sub(r'\s+', '', text).strip().lower()
+
+    @classmethod
+    def _verify_citations(cls, raw: str, page_text: str, limit: int = 5):
+        raw = raw.strip()
+        start, end = raw.find('['), raw.find(']')
+        if start == -1 or end == -1 or end < start:
+            return []
+
+        try:
+            quotes = json.loads(raw[start:end + 1])
+        except json.JSONDecodeError:
+            return []
+
+        if not isinstance(quotes, list):
+            return []
+
+        haystack = cls._normalize(page_text)
+        verified, seen = [], set()
+
+        for quote in quotes:
+            if not isinstance(quote, str):
+                continue
+            quote = quote.strip()
+            norm = cls._normalize(quote)
+
+            if len(norm) < 15 or norm in seen or norm not in haystack:
+                continue
+
+            seen.add(norm)
+            verified.append(quote)
+            if len(verified) >= limit:
+                break
+
+        return verified

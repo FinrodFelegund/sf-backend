@@ -14,6 +14,7 @@ dependencies = [
     "gunicorn>=23.0.0",
     "markdown>=3.10",
     "openai>=2.15.0",
+    "scipy",
     "psycopg[binary,pool]>=3.3.1",
     "celery[redis]>=5.4",
     "redis>=5.2",
@@ -23,6 +24,7 @@ dependencies = [
     "trafilatura>=1.12.2",
     "spacy>=3.8.14",
     "langdetect",
+    "networkx",
     "de_core_news_md",
     "en_core_web_md",
 ]
@@ -47,27 +49,29 @@ en_core_web_md = { url = "https://github.com/explosion/spacy-models/releases/dow
 [tool.isort]
 profile = "black"
 
-[tool.ruff]
-line-length = 140
+
+#[tool.ruff]
+#line-length = 140
 #lint.select = ["E", "F", "W", "I", "D", "A", "N", "B", "SIM", "C4", "TID"]
-lint.ignore = [
-    "E741", # Ambiguous variable name
-    "D213", # Multi-line docstring summary should start at the second line
-    "D105", # Missing docstring in magic method
-    "D107", # Missing docstring in __init__
-    "D203", # 1 blank line required before class docstring
-    "D401", # First line should be in imperative mood; try rephrasing
-    "D407", # Missing dashed underline after section
-    "D406", # Section name should end with a newline
-    "D106", # Missing docstring in public nested class
-    "B006", # Do not use mutable data structures for argument defaults
-    "B008", # Do not perform function calls in argument defaults
-    "B905", # `zip()` without an explicit `strict=` parameter
-    "D100", # Missing docstring in public module
-    "D101", # Missing docstring in public class
-    "D102", # Missing docstring in public method
-    "D400", # First line should be capitalized
-]
+#lint.ignore = [
+#    "E741", # Ambiguous variable name
+#    "D213", # Multi-line docstring summary should start at the second line
+#    "D105", # Missing docstring in magic method
+#    "D107", # Missing docstring in __init__
+#    "D203", # 1 blank line required before class docstring
+#    "D401", # First line should be in imperative mood; try rephrasing
+#    "D407", # Missing dashed underline after section
+#    "D406", # Section name should end with a newline
+#    "D106", # Missing docstring in public nested class
+#    "B006", # Do not use mutable data structures for argument defaults
+#    "B008", # Do not perform function calls in argument defaults
+#    "B905", # `zip()` without an explicit `strict=` parameter
+#    "D100", # Missing docstring in public module
+#    "D101", # Missing docstring in public class
+#    "D102", # Missing docstring in public method
+#    "D400", # First line should be capitalized
+#]
+
 exclude = ["docs"]
 
 [tool.ruff.format]
