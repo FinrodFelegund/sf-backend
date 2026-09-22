@@ -10,20 +10,40 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
-from pathlib import Path
-from datetime import timedelta
-import env
-from typing import Optional, Union
 import os
+from datetime import timedelta
+from pathlib import Path
 
-def get_from_env(key: str, default: Optional[Union[str, bool]] = None):
+from django.core.exceptions import ImproperlyConfigured
+
+try:
+    import env as _local
+except ModuleNotFoundError:
+    _local = None
+
+def _env(key, default=None):
     if key in os.environ:
         return os.environ[key]
-    
-    if not default:
-        return None
-
+    if _local is not None and hasattr(_local, key):
+        return getattr(_local, key)
     return default
+
+def _bool(key, default=False):
+    raw = _env(key)
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ('1', 'true')
+
+def _list(key, default=()):
+    raw = _env(key)
+    if not raw:
+        return list(default)
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    return [part.strip() for part in str(raw).split(',') if part.strip()]
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -36,26 +56,41 @@ SYSTEM_DATA_DIR = BASE_DIR / 'data'
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-$b+o#d&_e!@i__2+z7y*7-01e=^a1f_!rxv3yw1$#)ln^6-=da'
+RUNNING_IN_DOCKER = _bool('RUNNING_IN_DOCKER', False)
+DEBUG = _bool('DEBUG', False)
+
+SECRET_KEY = _env('DJANGO_SECRET_KEY') or 'django-insecure-local-only'
+if not DEBUG and SECRET_KEY.startswith('django-insecure'):
+    raise ImproperlyConfigured('DJANGO_SECRET_KEY must be set when DEBUG is off')
+    
+
+EXTENSION_ID = _env('CHROME_EXTENSION_ID', 'lhlclfoenmbnghjpiajilbebohmadabo')
+EXTENSION_ORIGIN = f'chrome-extension://{EXTENSION_ID}'
+SERVER_DOMAIN = _env('SERVER_DOMAIN', 'localhost')
+
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = ['localhost']
-CORS_ALLOWED_ORIGINS = ['chrome-extension://lhlclfoenmbnghjpiajilbebohmadabo']
+if RUNNING_IN_DOCKER:
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost', SERVER_DOMAIN, 'testserver']
+    CORS_ALLOWED_ORIGINS = [EXTENSION_ORIGIN]
+    CSRF_TRUSTED_ORIGINS = [EXTENSION_ORIGIN, f'https://{SERVER_DOMAIN}']
+else:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
+    CORS_ALLOWED_ORIGINS = [EXTENSION_ORIGIN]
+    CSRF_TRUSTED_ORIGINS = [EXTENSION_ORIGIN, 'http://localhost:8000']
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = get_from_env('DEBUG', env.DEBUG)
-OPENAI_API_KEY = get_from_env('OPENAI_API_KEY', env.OPENAI_API_KEY)
-OPENAI_MODEL = get_from_env('OPENAI_MODEL', env.OPENAI_MODEL)
-OPENAI_BASE_URL = get_from_env('OPENAI_BASE_URL', env.OPENAI_API_BASE_URL)
-VIRTUAL_KEY = get_from_env('VIRTUAL_KEY', env.VIRTUAL_KEY)
-ADMIN_USER_PASSWORD = get_from_env('ADMIN_USER_PASSWORD', env.ADMIN_USER_PASSWORD)
-ADMIN_USER_TOKEN = get_from_env('ADMIN_USER_TOKEN', env.ADMIN_USER_TOKEN)
-TEST_USER_PASSWORD = get_from_env('TEST_USER_PASSWORD', env.TEST_USER_PASSWORD)
 
-POSTGRES_PASSWORD = get_from_env('POSTGRES_PASSWORD', env.POSTGRES_PASSWORD)
-POSTGRES_PORT = get_from_env('POSTGRES_PORT', env.POSTGRES_PORT)
+OPENAI_API_KEY = _env('OPENAI_API_KEY')
+OPENAI_MODEL = _env('OPENAI_MODEL')
+OPENAI_BASE_URL =_env('OPENAI_BASE_URL')
+VIRTUAL_KEY = _env('VIRTUAL_KEY')
 
+ADMIN_USER_PASSWORD = _env('ADMIN_USER_PASSWORD')
+ADMIN_USER_TOKEN = _env('ADMIN_USER_TOKEN')
+TEST_USER_PASSWORD = _env('TEST_USER_PASSWORD')
 
-ALLOWED_HOSTS = []
+POSTGRES_PASSWORD = _env('POSTGRES_PASSWORD')
+POSTGRES_PORT = _env('POSTGRES_PORT')
 
 
 # Application definition
@@ -72,6 +107,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_gis',
     'drf_spectacular',
+    'drf_spectacular_sidecar',
     'knox',
     'user.apps.UserConfig',
     'graph.apps.GraphConfig',
@@ -133,11 +169,12 @@ AUTH_USER_MODEL = 'user.CustomUser'
 DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis',
-        'NAME': 'postgres',
-        'USER': 'postgres',
-        'PASSWORD': POSTGRES_PASSWORD,
-        'HOST': 'localhost',
-        'PORT': POSTGRES_PORT,
+        'NAME': _env('POSTGRES_DB', 'postgres'),
+        'USER': _env('POSTGRES_USER', 'postgres'),
+        'PASSWORD': _env('POSTGRES_PASSWORD'),
+        'HOST': 'db' if RUNNING_IN_DOCKER else 'localhost',
+        'PORT': _env('POSTGRES_PORT', '5432'),
+        'CONN_MAX_AGE': int(_env('DB_CONN_MAX_AGE', 60)),
     }
 }
 
@@ -177,6 +214,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = DATA_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -202,14 +240,60 @@ REST_FRAMEWORK = {
     },
 }
 
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
 
-CSRF_TRUSTED_ORIGINS = ['chrome-extension://lhlclfoenmbnghjpiajilbebohmadabo']
+if RUNNING_IN_DOCKER:
+    SECURE_HSTS_SECONDS = 24 * 60 * 60
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = False
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SAMESITE = 'None'
+    CSRF_COOKIE_SAMESITE = 'None'
+else:
+    SECURE_HSTS_SECONDS = 0
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    CSRF_COOKIE_SAMESITE = 'Lax'
 
-SECURE_HSTS_SECONDS = 0
-SECURE_HSTS_INCLUDE_SUBDOMAINS = False
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
-SECURE_HSTS_PRELOAD = False
-SILENCED_SYSTEM_CHECKS = [
-    'security.W008',  # because we use a reverse-proxy
-]
+SILENCED_SYSTEM_CHECKS = ['security.W008']
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.resend.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = _env('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = _env('EMAIL_HOST_PASSWORD')
+DEFAULT_FROM_EMAIL = _env('DEFAULT_FROM_MAIL')
+
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'chat': {'level': 'INFO'},
+        'graph': {'level': 'INFO'},
+        'web': {'level': 'INFO'},
+        'shared': {'level': 'INFO'},
+    },
+}

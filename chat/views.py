@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from django.http import StreamingHttpResponse
@@ -15,12 +16,15 @@ from chat.serializers import (
     ChatHistorySerializer,
     ChatRequestSerializer,
 )
+from shared.llm import sse
 from shared.llm.citation import CITATION_SENTINEL
-from shared.llm.openai import get_openai_client
+from shared.llm.openai import EmptyCompletionError, get_openai_client
 from web.models import Website
 from web.services.service import get_or_refresh_website
 
 # Create your views here.
+
+logger = logging.getLogger(__name__)
 
 class ChatHistoryViewSetAPI(
     mixins.ListModelMixin,
@@ -30,13 +34,13 @@ class ChatHistoryViewSetAPI(
     viewsets.GenericViewSet,
 ):
     serializer_class = ChatHistorySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def get_queryset(self):
         return ChatHistory.objects.filter(user=self.request.user)
 
 class ChatHistoryViewSet(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     @extend_schema(
         request=ChatHistoryLookupSerializer,
@@ -45,7 +49,6 @@ class ChatHistoryViewSet(APIView):
     def post(self, request):
         serializer = ChatHistoryLookupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        print(request.data)
         user = request.user
         url = serializer.validated_data['url']
 
@@ -68,7 +71,7 @@ class ChatHistoryViewSet(APIView):
     
 
 class ChatStreamViewSet(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated)
 
     @extend_schema(request=ChatRequestSerializer, description='Ask a question about the website, streamed as SSE')
     def post(self, request):
@@ -78,7 +81,7 @@ class ChatStreamViewSet(APIView):
 
         website = get_or_refresh_website(request.user, data['url'], data['text'])
         summary = self._get_or_create_summary(website)
-        chat_history, created = ChatHistory.objects.get_or_create(user=request.user, website=website)
+        chat_history, _ = ChatHistory.objects.get_or_create(user=request.user, website=website)
         history_for_llm = list(chat_history.messages)
         chat_history.messages.append({'role': 'user', 'content': data['content'], 'timestamp': data['timestamp']})
         chat_history.save(update_fields=['messages', 'updated_at'])
@@ -96,18 +99,20 @@ class ChatStreamViewSet(APIView):
     def _get_or_create_summary(website: Website):
         if website.summary:
             return website.summary
+
         client = get_openai_client()
         messages = client.build_summary_prompt(website=website)
-        website.summary = client.response(messages=messages)
+
+        try:
+            summary = client.response(messages=messages)
+        except EmptyCompletionError:
+            logger.warning('No summary produced for website %s', website.pk)
+            return ''
+        
+        website.summary = summary
         website.save(update_fields=['summary', 'updated_at'])
         return website.summary
     
-    @staticmethod
-    def _get_or_create_history(user, website, url):
-        if url:
-            return get_object_or_404(ChatHistory, user=user, website=website)
-        
-        return ChatHistory.objects.create(user=user, website=website)
     
     def _stream_answer(self, chat_history, page_text, history_for_llm, data):
         client = get_openai_client()
@@ -118,13 +123,14 @@ class ChatStreamViewSet(APIView):
         sources_raw = ''
         in_sources = False
         hold = len(CITATION_SENTINEL) - 1
+        failed = False
 
         try:
             for chunk in client.stream(messages=messages):
                 if in_sources:
                     sources_raw += chunk
                     continue
-                
+
                 buffer += chunk
                 idx = buffer.find(CITATION_SENTINEL)
 
@@ -139,15 +145,29 @@ class ChatStreamViewSet(APIView):
 
                 if emit:
                     answer_parts.append(emit)
-                    yield f'data: {json.dumps({"content": emit})}\n\n'
+                    yield sse.frame({'content': emit})
 
             if not in_sources and buffer:
                 answer_parts.append(buffer)
-                yield f'data: {json.dumps({'content': buffer})}\n\n'
+                yield sse.frame({'content': buffer})
 
-        except Exception as e:
-            raise RuntimeError(str(e))
-        finally:
+        except Exception:
+            failed = True
+            logger.exception(
+                'Chat stream failed for website %s (history %s)',
+                chat_history.website_id, chat_history.pk,
+            )
+            yield sse.error_frame(
+                'The answer could not be completed. Please try again.',
+                code='llm_unavailable',
+            )
+
+        if failed:
+            yield sse.DONE
+            return
+
+        citations = []
+        try:
             answer = ''.join(answer_parts).rstrip()
             citations = self._verify_citations(sources_raw, page_text)
 
@@ -159,9 +179,11 @@ class ChatStreamViewSet(APIView):
                     'citations': citations,
                 })
                 chat_history.save(update_fields=['messages', 'updated_at'])
-            
-            yield f'data: {json.dumps({'citations': citations})}\n\n'
-            yield 'data: [DONE]\n\n'
+        except Exception:
+            logger.exception('Could not persist chat answer for history %s', chat_history.pk)
+
+        yield sse.frame({'citations': citations})
+        yield sse.DONE
 
     @staticmethod
     def _normalize(text: str) -> str:

@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: storyfinder
+      POSTGRES_USER: storyfinder
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storyfinder"]
+      interval: 5s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    depends_on:
+      db: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  pgdata:

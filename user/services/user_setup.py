@@ -2,15 +2,15 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from knox.models import AuthToken
 
-import env
+from storyfinder.settings import _env
 
 User = get_user_model()
 
 class UserSetupService():
     def __init__(self):
-        self.admin_password = env.ADMIN_USER_PASSWORD
-        self.admin_token = env.ADMIN_USER_TOKEN
-        self.test_password = env.TEST_USER_PASSWORD
+        self.admin_password = _env('ADMIN_USER_PASSWORD')
+        self.admin_token = _env('ADMIN_USER_TOKEN')
+        self.test_password = _env('TEST_USER_PASSWORD')
 
     @transaction.atomic
     def reset_dev_environment(self):
@@ -44,8 +44,27 @@ class UserSetupService():
                     AuthToken.objects.get_or_create(user=admin)
 
         users_to_create = [
-            ('John_Doe', 'John', 'Doe'),
-            ('Sarah_Parker', 'Sarah', 'Parker'),
+            ('User1', 'User', '1'),
+            ('User2', 'User', '2'),
+            ('User3', 'User', '3'),
+            ('User4', 'User', '4'),
+            ('User5', 'User', '5'),
+            ('User6', 'User', '6'),
+            ('User7', 'User', '7'),
+            ('User8', 'User', '8'),
+            ('User9', 'User', '9'),
+            ('User10', 'User', '10'),
+            ('User11', 'User', '11'),
+            ('User12', 'User', '12'),
+            ('User13', 'User', '13'),
+            ('User14', 'User', '14'),
+            ('User15', 'User', '15'),
+            ('User16', 'User', '16'),
+            ('User17', 'User', '17'),
+            ('User18', 'User', '18'),
+            ('User19', 'User', '19'),
+            ('User20', 'User', '20'),
+
         ]
 
         for username, first_name, last_name in users_to_create:

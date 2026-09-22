@@ -1,27 +1,29 @@
 from rest_framework import serializers
+
 from chat.models import ChatHistory
 
-class ChatRequestSerializer(serializers.Serializer):
-    chat_message_id = serializers.IntegerField(required=False, allow_null=True)
-    text = serializers.CharField()
-    url = serializers.CharField()
-    role = serializers.CharField()
-    content = serializers.CharField()
+CONTENT_MAX = 8000
+URL_MAX = 2000
+
+class ChatMessageSerializer(serializers.Serializer):
+    chat_message_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    role = serializers.ChoiceField(choices=['user', 'assistant'])
+    content = serializers.CharField(max_length=CONTENT_MAX)
     timestamp = serializers.CharField()
 
-    def to_internal_value(self, data):
-        if 'chat_message_id' not in data:
-            data['chat_message_id'] = data['message']['chat_message_id']
-        if 'role' not in data:
-            data['role'] = data['message']['role']
-        if 'content' not in data:
-            data['content'] = data['message']['content']
-        if 'timestamp' not in data:
-            data['timestamp'] = data['message']['timestamp']
-        del data['message']
-        return super(ChatRequestSerializer, self).to_internal_value(data)
+class ChatRequestSerializer(serializers.Serializer):
+    chat_history_id = serializers.IntegerField(required=False, allow_null=True)
+    url = serializers.CharField(max_length=URL_MAX)
+    text = serializers.CharField(allow_blank=True)
+    message = ChatMessageSerializer()
 
-        
+    def validate(self, attrs):
+        message = attrs.pop('message')
+        attrs['chat_message_id'] = message.get('chat_message_id')
+        attrs['role'] = message['role']
+        attrs['content'] = message['content']
+        attrs['timestamp'] = message['timestamp']
+        return attrs
 
 class ChatHistorySerializer(serializers.ModelSerializer):
     class Meta:

@@ -1,6 +1,5 @@
 import hashlib
 
-from django.conf import settings
 from django.db import models
 
 from storyfinder.models import BaseModel
@@ -53,6 +52,11 @@ class Sentence(BaseModel):
         verbose_name = 'Sentence'
         verbose_name_plural = 'Sentences'
         indexes = [models.Index(fields=['website'])]
+        constraints = [
+            models.UniqueConstraint(
+                'website', models.functions.MD5('text'), name='unique_sentence_per_website'
+            )
+        ]
 
     def __str__(self):
         return f'{self.website.url}: {self.text[:50]}'
@@ -60,6 +64,10 @@ class Sentence(BaseModel):
 class Origin(models.TextChoices):
     PIPELINE = 'PIPELINE', 'Extracted'
     MANUAL = 'MANUAL', 'User added'
+
+class EntityQuerySet(models.QuerySet):
+    def canonical(self):
+        return self.filter(master__isnull=True)
 
 class Entity(BaseModel):
     class EntityType(models.TextChoices):
@@ -69,20 +77,46 @@ class Entity(BaseModel):
         LOC    = 'LOC', 'Location'
         NORP   = 'NORP', 'Nationality/Religious/Political group'
 
+    MAX_ALIAS_DEPTH = 10
+
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='entities')
     entity_name = models.CharField(max_length=255)
     entity_type = models.CharField(max_length=30, choices=EntityType.choices)
 
+    master = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='aliases',
+        help_text='Set when this entity was merged into another.'
+    )
+
     websites = models.ManyToManyField(Website, through='WebsiteEntity', related_name='entities')
     sentences = models.ManyToManyField(Sentence, related_name='entities')
+
+    objects = EntityQuerySet.as_manager()
 
     class Meta:
         ordering = ['user', 'entity_name']
         verbose_name = 'Entity'
         verbose_name_plural = 'Entities'
-        constraints = [
-            models.UniqueConstraint(fields=['user', 'entity_name', 'entity_type'], name='unique_entity_per_user'),
+        constraints = [  # noqa: RUF012
+            models.UniqueConstraint(
+                fields=['user', 'entity_name', 'entity_type'], name='unique_entity_per_user'
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(master=models.F('id')), name='entity_master_not_self'
+            ),
         ]
+
+    def resolve(self):
+        entity = self
+        for _ in range(self.MAX_ALIAS_DEPTH):
+            if entity.master_id is None:
+                return entity
+            entity = entity.master
+        return entity
 
     def __str__(self):
         return f'{self.entity_name} ({self.entity_type})'
@@ -141,6 +175,11 @@ class Relation(BaseModel):
             models.UniqueConstraint(
                 fields=['user', 'entity1', 'entity2', 'relation_type'], name='unique_relation_per_user'
             ),
+            models.UniqueConstraint(
+                fields=['user', 'entity1', 'entity2'],
+                condition=models.Q(relation_type__isnull=True),
+                name='unique_unlabelled_relation_per_user',
+            )
         ]
 
     def save(self, *args, **kwargs):

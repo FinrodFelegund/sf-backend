@@ -30,14 +30,16 @@ class SystemPromptSetupService:
         with open(promptpath, mode='r') as f:
             json_file = json.load(f)
 
+            created = 0
             for l, t in self.combinations:
                 prompt = json_file[l][t]
-                prompt = ChatSystemPrompt.objects.create(
+                _, was_created = ChatSystemPrompt.objects.get_or_create(
                     name=f'Prompt for {t} in language {l}',
                     content=prompt,
                     role=t,
                     lang=l
                 )
+                created += int(was_created)
 
-        return len(self.combinations)
+        return created
 

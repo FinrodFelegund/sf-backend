@@ -1,13 +1,22 @@
-from typing import Dict, List
 import json
+import logging
 import re
+
 from django.db.models import Count
 
-from shared.llm.openai import get_openai_client, PromptType, PromptLanguage
-from web.models import Website, Sentence, Entity, Relation, RelationType
+from shared.llm.openai import (
+    EmptyCompletionError,
+    PromptLanguage,
+    PromptType,
+    get_openai_client,
+)
+from web.models import Entity, Relation, RelationType, Sentence, Website
+
+logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 20
 _MAX_LABEL_LENGTH = 255
+_MAX_ENTITIES_PER_SENTENCE = 8
 
 class RelationExtraction:
     
@@ -24,10 +33,10 @@ class RelationExtraction:
             .prefetch_related('entities')
         )
     
-    def _build_payload(self, sentences: List[Sentence]):
+    def _build_payload(self, sentences: list[Sentence]):
         payload = []
-        sentences_by_id: Dict[int, Sentence] = {}
-        entities_by_sentence: Dict[int, Dict[int, Entity]] = {}
+        sentences_by_id: dict[int, Sentence] = {}
+        entities_by_sentence: dict[int, dict[int, Entity]] = {}
 
         for sentence in sentences:
             entities = [e for e in sentence.entities.all() if e.user_id == self.user.id]
@@ -50,7 +59,7 @@ class RelationExtraction:
         
         return payload, sentences_by_id, entities_by_sentence
     
-    def _build_message(self, batch: List[Dict]):
+    def _build_message(self, batch: list[dict]):
         prompt = self.client.get_active_prompt(
             prompt_type=PromptType.GRAPH,
             lang=PromptLanguage.EN,
@@ -81,7 +90,7 @@ class RelationExtraction:
             if not isinstance(item, dict):
                 continue
 
-            sentence = sentences_by_id.get((item.get('sentence_id')))
+            sentence = sentences_by_id.get(item.get('sentence_id'))
             if sentence is None:
                 continue
 
@@ -97,12 +106,22 @@ class RelationExtraction:
                 e1, e2 = e2, e1
 
             relation_type, _ = RelationType.objects.get_or_create(user=self.user, label=label)
-            relation, _ = Relation.objects.get_or_create(
+            relation, created = Relation.objects.get_or_create(
                 user=self.user,
                 entity1=e1,
                 entity2=e2,
                 relation_type=relation_type,
             )
+
+            if created:
+                placeholder = Relation.objects.filter(
+                    user=self.user, entity1=e1, entity2=e2, relation_type__isnull=True
+                ).first()
+
+            if placeholder is not None:
+                relation.websites.add(*placeholder.website.all())
+                relation.sentences.add(*placeholder.sentences.all())
+                placeholder.delete()
 
             relation.websites.add(self.website)
             relation.sentences.add(sentence)
@@ -117,6 +136,62 @@ class RelationExtraction:
 
         return links
 
+    def _persist_occurences(self, sentences_by_id, entities_by_sentence):
+        candidate_ids = {
+            entity_id
+            for entities in entities_by_sentence.values()
+            for entity_id in entities
+        }
+        if not candidate_ids:
+            return []
+
+        # any pair that already has a relation — labelled or not, from any page —
+        # needs no placeholder
+        linked = set(
+            Relation.objects
+            .filter(user=self.user, entity1_id__in=candidate_ids, entity2_id__in=candidate_ids)
+            .values_list('entity1_id', 'entity2_id')
+        )
+
+        links = []
+
+        for sentence_id, entities in entities_by_sentence.items():
+            ids = sorted(entities)
+
+            if len(ids) > _MAX_ENTITIES_PER_SENTENCE:
+                logger.debug(
+                    'Skipping co-occurrence for sentence %s: %s entities', sentence_id, len(ids)
+                )
+                continue
+
+            sentence = sentences_by_id[sentence_id]
+
+            for index, first_id in enumerate(ids):
+                for second_id in ids[index + 1:]:
+                    if (first_id, second_id) in linked:
+                        continue
+
+                    relation, _ = Relation.objects.get_or_create(
+                        user=self.user,
+                        entity1_id=first_id,
+                        entity2_id=second_id,
+                        relation_type=None,
+                    )
+                    linked.add((first_id, second_id))
+
+                    relation.websites.add(self.website)
+                    relation.sentences.add(sentence)
+
+                    links.append({
+                        'id': relation.id,
+                        'sentences': [sent.text for sent in relation.sentences.all()],
+                        'relation_type': None,
+                        'source': str(first_id),
+                        'target': str(second_id),
+                    })
+
+        return links        
+
 
     def stream(self):
         sentences = self._get_candidate_sentences()
@@ -125,11 +200,20 @@ class RelationExtraction:
             return
         
         for i in range(0, len(payload), _BATCH_SIZE):
-            batch = payload[i:i+_BATCH_SIZE]
-            raw = self.client.response(messages=self._build_message(batch))
+            batch = payload[i:i + _BATCH_SIZE]
+
+            try:
+                raw = self.client.response(messages=self._build_message(batch))
+            except EmptyCompletionError:
+                logger.warning('No relations returned for batch %s of %s', i // _BATCH_SIZE, self.website.pk)
+                continue
+                
             extracted = self._parse_response(raw)
             yield self._persist(extracted, sentences_by_id, entities_by_sentence)
    
+        cooccurences = self._persist_occurences(sentences_by_id, entities_by_sentence)
+        if cooccurences:
+            yield cooccurences
 
 
     def respond(self):

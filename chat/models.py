@@ -19,7 +19,12 @@ class ChatHistory(BaseModel):
         ordering = ['-updated_at', '-created_at']
         verbose_name = 'Chat History'
         verbose_name_plural = 'Chat Histories'
-        indexes = [models.Index(fields=['user', 'website'])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'website'],
+                name='unique_chat_history_per_user_website',
+            )
+        ]
 
     def __str__(self):
         return f'{self.user.username} - {self.title} | Messages: {len(self.messages)}'

@@ -13,6 +13,31 @@ from storyfinder.settings import (
 )
 
 
+class EmptyCompletionError(RuntimeError):
+    
+    def response(self, messages: list[dict], model: str | None = None) -> str:
+        model = model or self.model
+        completion = self.client.chat.completions.create(model=model, messages=messages)
+
+        choices = getattr(completion, 'choices', None) or []
+        if not choices:
+            raise EmptyCompletionError(
+                f'{model} returned no choices '
+                f'(finish reason unavailbale, id={getattr(completion, "id", "?")})'
+            )
+
+        message = getattr(choices[0], 'message', None)
+        content = getattr(message, 'content', None)
+
+        if not content:
+            raise EmptyCompletionError(
+                f'{model} returned empty content '
+                f'(finish_reason={getattr(choices[0], "finish_reason", "?")})'
+            )
+
+        return content
+
+
 class PromptType(Enum):
     CHAT = 'chat'
     SUMMARY = 'summary'

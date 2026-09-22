@@ -1,26 +1,32 @@
-import json
 import logging
+from collections import defaultdict
 
 import networkx as nx
 from django.db.models import Count, Prefetch
 from django.http import StreamingHttpResponse
 from drf_spectacular.utils import extend_schema
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework import status
 
-from graph.serializers import GraphQuerySerializer, GraphRequestSerializer, GraphFocusQuerySerializer
+from graph.serializers import (
+    GraphFocusQuerySerializer,
+    GraphQuerySerializer,
+    GraphRequestSerializer,
+)
 from shared.entityrecognition.ner import NERPipeline
+from shared.llm import sse
 from shared.relationextraction.relation_extraction import RelationExtraction
-from shared.webscrapping.scrapper import Scrapper
-from web.models import Entity, Relation, RelationType, Sentence, Website, WebsiteEntity
+from web.models import Entity, Relation, Sentence, Website, WebsiteEntity
 from web.services.service import get_or_refresh_website_with_state, tfidf_for_websites
 
 # Create your views here.
 
+logger = logging.getLogger(__name__)
+
 class GraphViewSet(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     @extend_schema(
         request=GraphRequestSerializer,
@@ -50,37 +56,38 @@ class GraphViewSet(APIView):
 
         sentences, entities = output['sentences'], output['entities']
         for sentence in sentences:
-            sent, created = Sentence.objects.get_or_create(website=website, text=sentence['text'])
-            if created:
-                sent.save()
-            
+            sent, _ = Sentence.objects.get_or_create(website=website, text=sentence['text'])            
             sents.append(sent)
 
+        canonical = {}
+        counts = defaultdict(int)
+        sentence_idxs = defaultdict(set)
 
         for entity in entities.values():
-            label = entity['label']
-            caption = entity['caption']
-            sent_idxs = entity['sent_idx']
+            ent, _ = Entity.objects.get_or_create(
+                user=request.user,
+                entity_name=entity['caption'],
+                entity_type=entity['label'],
+            )
+            ent = ent.resolve()
 
-            ent, created = Entity.objects.get_or_create(user=request.user, entity_name=caption, entity_type=label)
-            if created:
-                ent.save()
-            
-            
+            canonical[ent.id] = ent
+            counts[ent.id] += entity['count']
+            sentence_idxs[ent.id].update(entity['sent_idx'])
+
+        for entity_id, ent in canonical.items():
             ent.websites.add(website)
-            for i in sent_idxs:
-                ent.sentences.add(sents[i])
+            ent.sentences.add(*[sents[i] for i in sorted(sentence_idxs[entity_id])])
 
             nodes.append({'id': str(ent.id), 'label': ent.entity_type, 'caption': ent.entity_name})
 
             website_ent, created = WebsiteEntity.objects.get_or_create(
                 website=website,
                 entity=ent,
-                defaults={'count': entity['count']}
-            
+                defaults={'count': counts[entity_id]},
             )
-            if not created and website_ent.count != entity['count']:
-                website_ent.count = entity['count']
+            if not created and website_ent.count != counts[entity_id]:
+                website_ent.count = counts[entity_id]
                 website_ent.save(update_fields=['count', 'updated_at'])
 
         
@@ -96,43 +103,37 @@ class GraphViewSet(APIView):
         return response
 
     @staticmethod
-    def _stream_existing(nodes, links):
-        yield f'data: {json.dumps({'type': 'nodes', 'nodes': nodes})}\n\n'
-
-        if links:
-            yield f'data: {json.dumps({'type': 'links', 'links': links})}\n\n'
-
-        scores = GraphViewSet._score_nodes(nodes, links)
-        yield f'data: {json.dumps({'type': 'scores', 'scores': scores})}\n\n'
-        yield 'data: [DONE]\n\n'
-
-    @staticmethod
     def _stream_snapshot(user, website):
-        nodes, links = GraphViewSet._collect_graph(user, website)
-        yield f'data: {json.dumps(
-            {
-                'type': 'graph',
-                'nodes': nodes,
-                'links': links,
-                'scores': GraphViewSet._score_nodes(nodes, links),
-            }
-        )}\n\n'
+        try:
+            nodes, links = GraphViewSet._collect_graph(user, website)
+            scores = GraphViewSet._score_nodes(nodes, links)
+        except Exception:
+            logger.exception(
+                'Could not build graph snapshot for website %s', getattr(website, 'pk', None)
+            )
+            yield sse.error_frame('The graph could not be loaded.', code='snapshot_failed')
+            yield sse.DONE
+            return
 
-        yield 'data: [DONE]\n\n'
+        yield sse.frame({'type': 'graph', 'nodes': nodes, 'links': links, 'scores': scores})
+        yield sse.DONE
 
 
     @staticmethod
     def _stream_graph(user, website, nodes, extractor):
-        yield f'data: {json.dumps({'type': 'nodes', 'nodes': nodes})}\n\n'
+        yield sse.frame({'type': 'nodes', 'nodes': nodes})
 
         try:
             for links in extractor.stream():
-                yield f'data: {json.dumps({'type': 'links', 'links': links})}\n\n'
-        except Exception as e:
-            raise RuntimeError(str(e))
+                yield sse.frame({'type': 'links', 'links': links})
+        except Exception:
+            logger.exception('Relation extraction failed for website %s', website.pk)
+            yield sse.error_frame(
+                'Relation extraction stopped early — the entities found so far were saved.',
+                code='extraction_failed',
+            )
         
-        finally:
-            yield from GraphViewSet._stream_snapshot(user, website)
+        yield from GraphViewSet._stream_snapshot(user, website)
 
     @extend_schema(
         request=GraphQuerySerializer,
@@ -161,7 +162,7 @@ class GraphViewSet(APIView):
     def _collect_graph(user, website=None):
         is_global = website is None
 
-        entities = Entity.objects.filter(user=user)
+        entities = Entity.objects.filter(user=user).canonical()
         relations = Relation.objects.filter(user=user).select_related('relation_type')
 
         if is_global:
@@ -213,14 +214,17 @@ class GraphViewSet(APIView):
             })
 
         return nodes, links
+
     @staticmethod
     def _score_nodes(nodes, links):
         try:
             ranked = nx.pagerank(
                 G=nx.Graph([(link['source'], link['target']) for link in links])
             ) if links else {}
-        except Exception as e:
-            raise RuntimeError(str(e))
+        except Exception:
+            # Ranking is an enhancement — its failure must not cost the user the graph.
+            logger.exception('PageRank failed over %s links', len(links))
+            ranked = {}
 
         return [
             {'id': node['id'], 'score': ranked.get(node['id'], 0.0)}
@@ -228,7 +232,7 @@ class GraphViewSet(APIView):
         ]
 
 class GraphFocusView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     @extend_schema(
         parameters=[GraphFocusQuerySerializer],

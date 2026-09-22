@@ -1,23 +1,30 @@
+import random
+
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import update_last_login
-from knox.models import AuthToken
-from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
-from rest_framework import serializers, status
+from django.views.decorators.csrf import ensure_csrf_cookie
+from drf_spectacular.utils import extend_schema
+from knox.models import AuthToken
+from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
-from drf_spectacular.utils import extend_schema
+from rest_framework.viewsets import ModelViewSet
 
-from user.models import CustomUser
+from shared.email.smtp import send_register_mail
+from user.models import RegisterUser
 from user.serializer import (
     AuthTokenSerializer,
     LoginSerializer,
-    RegisterSerializer,
+    RegisterUserSerializer,
+    UnlockUserSerializer,
     UserDetailedSerializer,
-    UserListSerializer,
 )
+
+User = get_user_model()
 
 # Create your views here.
 
@@ -31,18 +38,107 @@ class CSRFTokenView(APIView):
 class LoginRateThrottle(AnonRateThrottle):
     scope = 'login'
 
-class UserViewSet():
-    pass
+class CurrentUserView(APIView):
+    permission_classes = (IsAuthenticated,)
 
-class RegisterView(APIView):
+    def get(self, request):
+        return Response(
+            {
+                'id': request.user.id,
+                'username': request.user.username,
+                'email': request.user.email,
+            }
+        )
+
+class RegisterView(ModelViewSet):
     permission_classes = [AllowAny]
-    @extend_schema(
-        request=RegisterSerializer,
-        responses={201: UserDetailedSerializer},
-        description='Register a new user and return tbd',
-    )
-    def post(self, request):
-        pass
+
+    @action(detail=False, methods=['post'], url_path='register')
+    def register(self, request, *args, **kwargs):
+        serializer = RegisterUserSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+
+        duplicate = User.objects.filter(username=user.username, email=user.email).exists()
+
+        if duplicate:
+            return Response(
+                {
+                    'detail': 'User with this emial or username already exists'
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        duplicate = RegisterUser.objects.filter(username=user.username, email=user.email).first()
+        if duplicate is not None:
+            return Response(
+                {
+                    'id': duplicate.id,
+                    'unlockCode': duplicate.unlockcode,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        unlockcode = ''.join(map(str, random.sample(range(9), 6)))
+        user.unlockcode = unlockcode
+        user.save()
+
+        send_register_mail(user.email, unlockcode)
+
+        return Response(
+            {
+                'id': user.id,
+                'unlockCode': unlockcode,
+            },
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=['post'], url_path='unlock')
+    def unlock(self, request, *args, **kwargs):
+        serializer = UnlockUserSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        id = serializer.validated_data['id']
+
+
+        register_user = RegisterUser.objects.filter(id=id).first()
+        if not register_user:
+            return Response(
+                {
+                    'detail': 'A register with this id does not exist'
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        duplicate = User.objects.filter(username=register_user.username, email=register_user.email).exists()
+        if duplicate:
+            return Response(
+                {
+                    'detail': 'A user with this user name or email already exists'
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User(
+            username=register_user.username,
+            first_name=register_user.firstname,
+            last_name=register_user.lastname,
+            password=register_user.password,
+            email=register_user.email,
+        )
+
+        user.save()
+        register_user.delete()
+
+        return Response(
+            {
+                'detail': 'User registered',
+            },
+            status=status.HTTP_200_OK,
+        )
+
+        
+
+        
 
 
 class LoginView(APIView):
@@ -55,10 +151,8 @@ class LoginView(APIView):
         description='Login with username and password, returns authentication token',
     )
     def post(self, request):
-        print(request.data)
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        print('Success')
         user = serializer.validated_data['user']
 
         update_last_login(None, user)
@@ -73,6 +167,7 @@ class LoginView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
     
     
 

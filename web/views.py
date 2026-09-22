@@ -1,11 +1,14 @@
-from django.db import IntegrityError, transaction
-from django.db.models import Count, Q
+import math
+from collections import defaultdict
+
+from django.db import DataError, IntegrityError, transaction
+from django.db.models import Count, Q, QuerySet
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
+from rest_framework.viewsets import GenericViewSet, ReadOnlyModelViewSet
 
 from web.models import (
     Entity,
@@ -17,6 +20,7 @@ from web.models import (
     WebsiteEntity,
 )
 from web.serializers import (
+    EntityDetailSerializer,
     EntitySerializer,
     MergeEntitySerializer,
     RelationSerializer,
@@ -26,9 +30,11 @@ from web.serializers import (
 
 # Create your views here.
 
+_DETAIL_SENTENCES_PER_SOURCE = 3
+
 class WebsiteViewSet(ReadOnlyModelViewSet):
     serializer_class = WebsiteSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def get_queryset(self):
         return (
@@ -51,6 +57,65 @@ class WebsiteViewSet(ReadOnlyModelViewSet):
             for site in self.get_queryset()
         ])
 
+    @extend_schema(responses=None)
+    def destroy(self, request, *args, **kwargs):
+        website = self.get_object()
+        website_id = str(website.id)
+
+        entity_ids = set(
+            WebsiteEntity.objects
+            .filter(website=website)
+            .values_list('entity_id', flat=True)
+        )
+
+        relation_ids = set(
+            Relation.objects
+            .filter(user=request.user, websites=website)
+            .values_list('id', flat=True)
+        )
+
+        with transaction.atomic():
+            website.delete()
+
+            orphan_relations = list(
+                Relation.objects
+                .filter(user=request.user, id__in=relation_ids)
+                .annotate(site_count=Count('websites', distinct=True))
+                .filter(site_count=0)
+                .values_list('id', flat=True)
+            )
+
+            Relation.objects.filter(id__in=orphan_relations).delete()
+
+            removed_entities = 0
+            candidates = set(entity_ids)
+            while candidates:
+                orphans = list(
+                    Entity.objects
+                    .filter(user=request.user, id__in=candidates)
+                    .annotate(
+                        site_count=Count('websites', distinct=True),
+                        alias_count=Count('aliases', distinct=True),
+                    )
+                    .filter(site_count=0, alias_count=0)
+                    .values_list('id', flat=True)
+                )
+
+                if not orphans:
+                    break
+                Entity.objects.filter(id__in=orphans).delete()
+                removed_entities += len(orphans)
+                candidates -= set(orphans)
+
+        return Response(
+            {
+                'website': website_id,
+                'entities_removed': removed_entities,
+                'relations_removed': len(orphan_relations)
+            },
+            status=status.HTTP_200_OK,
+        )
+
 def relation_payload(relation):
     return {
         'id': str(relation.id),
@@ -60,25 +125,22 @@ def relation_payload(relation):
         'sentences': [{'id': str(s.id), 'text': s.text} for s in relation.sentences.all()],
     }
 
-class EntityViewSet(ModelViewSet):
+
+class EntityViewSet(GenericViewSet):
     serializer_class = SiteEntitySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
+
 
     def get_queryset(self):
-        return Entity.objects.filter(user=self.request.user)
+        return Entity.objects.filter(user=self.request.user).canonical()
     
     def create(self, request, *args, **kwargs):
 
-        serializer = SiteEntitySerializer(data=request.data, partial=True)
+        serializer = SiteEntitySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         entity = serializer.validated_data['node']
         website = serializer.validated_data['website']
-
-        entity, created = Entity.objects.get_or_create(
-            user=request.user, 
-            entity_name=entity['caption'],
-            entity_type=entity['label'],
-        )
 
         website = Website.objects.filter(user=request.user, url=website['url']).first()
         if website is None:
@@ -86,6 +148,13 @@ class EntityViewSet(ModelViewSet):
                 {'detail': 'Unknown website for this user'},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        entity, created = Entity.objects.get_or_create(
+            user=request.user, 
+            entity_name=entity['caption'],
+            entity_type=entity['label'],
+        )
+
 
         WebsiteEntity.objects.get_or_create(
                 website=website,
@@ -123,6 +192,13 @@ class EntityViewSet(ModelViewSet):
             return Response(
                 {'detail': 'An entity with this name and type already exists'},
                 status=status.HTTP_409_CONFLICT,
+            )
+        except DataError:
+            return Response(
+                {
+                    'detail': 'Caption or type is too long',
+                },
+                status=status.HTTP_400_BAD_REQUEST
             )
         
         return Response({'id': entity.id, 'caption': entity.entity_name, 'label': entity.entity_type},)
@@ -174,34 +250,24 @@ class EntityViewSet(ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='merge')
     def merge(self, request):
-        url = request.query_params.get('url', '').strip()
         serializer = MergeEntitySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         source_id = serializer.validated_data['source_id']
         target_id = serializer.validated_data['target_id']
 
-        if not url:
+        by_id = {
+            entity.id: entity
+            for entity in Entity.objects.filter(user=request.user, id__in=[source_id, target_id])
+        }
+        source, target = by_id.get(source_id), by_id.get(target_id)
+
+        target = target.resolve()
+
+        if source.id == target.id:
             return Response(
-                {'detail': 'url is required'},
+                {'detail': 'source and target must be distinct'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        website = Website.objects.filter(user=request.user, url=url).first()
-        if website is None:
-            return Response(
-                {'detail': 'Unknown website'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if source_id == target_id:
-            return Response(
-                {'detail': 'source and target must be destinct'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        entities = Entity.objects.filter(user=request.user, id__in=[source_id, target_id])
-        by_id = {str(e.id): e for e in entities}
-        source, target = by_id.get(str(source_id)), by_id.get(str(target_id))
 
         if source is None or target is None:
             return Response(
@@ -250,6 +316,7 @@ class EntityViewSet(ModelViewSet):
                     updated_relations.append(relation_payload(relation))
                 
             target.sentences.add(*source.sentences.all())
+            source.sentences.clear()
 
             for membership in WebsiteEntity.objects.filter(entity=source):
                 WebsiteEntity.objects.get_or_create(
@@ -259,8 +326,10 @@ class EntityViewSet(ModelViewSet):
                 )
                 membership.delete()
 
-            source.delete()
-        
+            Entity.objects.filter(master=source).update(master=target)
+            source.master = target
+            source.save(update_fields=['master', 'updated_at'])
+
         return Response(
             {
                 'merged': {'id': str(target.id), 'caption': target.entity_name, 'label': target.entity_type},
@@ -270,11 +339,116 @@ class EntityViewSet(ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+        responses=EntityDetailSerializer,
+        description='For node detail panel'
+    )
+    @action(detail=True, methods=['get'], url_path='detail', url_name='detail')
+    def entity_detail(self, request, pk=None):
+        entity = self.get_object()
+
+        # --- Relations tab -------------------------------------------------
+        relations = (
+            Relation.objects
+            .filter(user=request.user)
+            .filter(Q(entity1=entity) | Q(entity2=entity))
+            .select_related('relation_type', 'entity1', 'entity2')
+            .annotate(evidence=Count('sentences', distinct=True))
+        )
+
+        rows = []
+        for relation in relations:
+            neighbour = relation.entity2 if relation.entity1_id == entity.id else relation.entity1
+            rows.append({
+                'id': str(relation.id),
+                'relation_type': relation.relation_type.label if relation.relation_type else None,
+                'neighbour': {
+                    'id': str(neighbour.id),
+                    'caption': neighbour.entity_name,
+                    'label': neighbour.entity_type,
+                },
+                'count': relation.evidence,
+            })
+
+        # legacy models/Relation.js:257-268 — log-scaled, so one heavily evidenced
+        # relation doesn't flatten every other bar to nothing
+        def weight(count):
+            return math.log(count) + 1 if count > 0 else 0
+
+        top = max((weight(row['count']) for row in rows), default=0)
+        for row in rows:
+            row['score'] = round(100 / top * weight(row['count'])) if top else 0
+
+        rows.sort(key=lambda row: (-row['count'], row['neighbour']['caption'].lower()))
+
+        # --- Sources tab ---------------------------------------------------
+        by_website = defaultdict(list)
+        for sentence in (
+            entity.sentences
+            .filter(website__user=request.user)
+            .order_by('website_id', 'created_at')
+        ):
+            by_website[sentence.website_id].append(sentence)
+
+        memberships = (
+            WebsiteEntity.objects
+            .filter(entity=entity, website__user=request.user)
+            .select_related('website')
+            .order_by('-website__updated_at')
+        )
+
+        sources = []
+        for membership in memberships:
+            site = membership.website
+            found = by_website.get(site.id, [])
+            sources.append({
+                'id': str(site.id),
+                'url': site.url,
+                'title': site.title or '',
+                'updated_at': site.updated_at,
+                'occurrences': membership.count,
+                'sentence_count': len(found),
+                'sentences': [
+                    {'id': str(s.id), 'text': s.text}
+                    for s in found[:_DETAIL_SENTENCES_PER_SOURCE]
+                ],
+            })
+
+        return Response({
+            'entity': {
+                'id': str(entity.id),
+                'caption': entity.entity_name,
+                'label': entity.entity_type,
+                'website_count': len(sources),
+                'occurrence_count': sum(source['occurrences'] for source in sources),
+                'aliases': [
+                    {'id': str(alias.id), 'caption': alias.entity_name, 'label': alias.entity_type}
+                    for alias in entity.aliases.all()
+                ],
+            },
+            'relations': rows,
+            'sources': sources,
+        })
+
+    @action(detail=True, methods=['post'], url_path='unmerge')
+    def unmerge_alias(self, request, pk=None):
+        canonical = self.get_object()
+        alias_id = request.data.get('alias_id')
+
+        alias = Entity.objects.filter(user=request.user, master=canonical, id=alias_id).first()
+        if alias is None:
+            return Response({'detail': 'alias not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        alias.master = None
+        alias.save(update_fields=['master', 'updated_at'])
+
+        return Response({'id': str(alias.id), 'caption': alias.entity_name, 'label': alias.entity_type})
+
         
 
-class RelationViewSet(ModelViewSet):
+class RelationViewSet(GenericViewSet):
     serializer_class = RelationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def get_queryset(self):
         return Relation.objects.filter(user=self.request.user)
@@ -296,7 +470,7 @@ class RelationViewSet(ModelViewSet):
             user=request.user, id__in=[link['source'].get('id'), link['target'].get('id')]
         )
 
-        by_id = {str(e.id): e for e in entities}
+        by_id = {str(e.id): e.resolve() for e in entities}
         first, second = by_id.get(str(link['source'].get('id'))), by_id.get(str(link['target'].get('id')))
 
         if first is None or second is None or first.id == second.id:
@@ -306,7 +480,7 @@ class RelationViewSet(ModelViewSet):
             )
 
         relation_type, _ = RelationType.objects.get_or_create(
-            user=request.user, label=(link.get('relation_type') or '').strip().lower()
+            user=request.user, label=link['relation_type']
         )
 
         if first.id > second.id:

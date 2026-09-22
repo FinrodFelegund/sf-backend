@@ -1,7 +1,11 @@
-import spacy
-from langdetect import detect
+import logging
 import re
 from functools import lru_cache
+
+import spacy
+from langdetect import DetectorFactory, LangDetectException, detect
+
+logger = logging.getLogger(__name__)
 
 _EXCLUDED_COMPONENTS = ['tagger', 'parser', 'attribute_ruler', 'lemmatizer', 'morphologizer']
 
@@ -11,9 +15,20 @@ _MODELS_BY_LANG = {
 }
 
 _LANG_DETECTION_SIZE = 2000
+_DEFAULT_LANG = 'de'
+_MIN_ALPHA_CHARS = 20
 _MAX_DOCUMENT_LENGTH = 200_000
 
 VALID_ENTITY_TAGS = frozenset({'PERSON', 'ORG', 'GPE', 'LOC', 'NORP'})
+
+def _has_letters(text: str, minimum: int) -> bool:
+    seen = 0
+    for char in text:
+        if char.isalpha():
+            seen += 1
+            if seen >= minimum:
+                return True
+    return False
 
 @lru_cache(maxsize=None)
 def _load_pipeline(lang: str):
@@ -32,7 +47,22 @@ class NERPipeline:
 
     def _detect_language(self):
         sample = self._document[:_LANG_DETECTION_SIZE].strip()
-        lang = detect(sample) if sample else 'en'
+
+        if not _has_letters(sample, _MIN_ALPHA_CHARS):
+            sample = self._document.strip()
+
+        if not _has_letters(sample, _MIN_ALPHA_CHARS):
+            return _DEFAULT_LANG
+
+        try:
+            lang = detect(sample) if sample else 'en'
+        except LangDetectException:
+            logger.info(
+                'Language detection failed on %s characters; falling back to %s',
+                len(sample), _DEFAULT_LANG,
+            )
+            return _DEFAULT_LANG
+            
         return 'en' if lang.startswith('en') else 'de'
     
     def normalize_entity(self, text: str) -> str:

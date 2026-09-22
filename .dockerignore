@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+__pycache__/
+**/__pycache__/
+*.py[cod]
+env.py
+.env
+database/docker.env
+database/docker-compose.dev.yml
+django_data/
+data/logs/
+.DS_Store
+README.md
+*.ipynb
