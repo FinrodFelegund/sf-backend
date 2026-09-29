@@ -1,6 +1,7 @@
-from rest_framework.routers import DefaultRouter
-from .views import ChatHistoryViewSetAPI, ChatHistoryViewSet, ChatStreamViewSet
 from django.urls import path
+from rest_framework.routers import DefaultRouter
+
+from .views import ChatHistoryViewSet, ChatHistoryViewSetAPI, ChatStreamViewSet
 
 api_router = DefaultRouter()
 api_router.register(r'chat-history', ChatHistoryViewSetAPI, basename='Chat-History')

@@ -23,6 +23,7 @@ from chat.urls import api_router as chat_api_router
 from chat.urls import chat_urlpatterns
 from graph.urls import api_router as graph_api_router
 from graph.urls import graph_urlpatterns
+from storyfinder.health import liveness, readiness
 from user.urls import api_router as user_api_router
 from user.urls import auth_urlpatterns
 from web.urls import api_router as web_api_router
@@ -52,6 +53,8 @@ admin.site.site_header = 'Storyfinder Backend - Admin'
 admin.site.site_title = 'Storyfinder Backend - Admin'
 
 urlpatterns = [
+    path('health/', liveness, name='health-live'),
+    path('health/ready', readiness, name='health-ready'),
     path('admin/', admin.site.urls),
     path('api-auth/', include('rest_framework.urls')),
     path('api/v1/', include(api_router.urls)),

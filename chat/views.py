@@ -3,9 +3,9 @@ import logging
 import re
 
 from django.http import StreamingHttpResponse
-from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -39,6 +39,7 @@ class ChatHistoryViewSetAPI(
     def get_queryset(self):
         return ChatHistory.objects.filter(user=self.request.user)
 
+
 class ChatHistoryViewSet(APIView):
     permission_classes = (IsAuthenticated,)
 
@@ -67,11 +68,10 @@ class ChatHistoryViewSet(APIView):
             status=status.HTTP_200_OK
         )
 
-
     
 
 class ChatStreamViewSet(APIView):
-    permission_classes = (IsAuthenticated)
+    permission_classes = (IsAuthenticated,)
 
     @extend_schema(request=ChatRequestSerializer, description='Ask a question about the website, streamed as SSE')
     def post(self, request):
@@ -222,3 +222,4 @@ class ChatStreamViewSet(APIView):
                 break
 
         return verified
+

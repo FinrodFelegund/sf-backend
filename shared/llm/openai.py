@@ -7,7 +7,7 @@ from chat.models import ChatSystemPrompt, Website
 from shared.llm.citation import CITATION_INSTRUCTION
 from storyfinder.settings import (
     OPENAI_API_KEY,
-    OPENAI_BASE_URL,
+    OPENAI_API_BASE_URL,
     OPENAI_MODEL,
     VIRTUAL_KEY,
 )
@@ -62,7 +62,7 @@ class OpenAIClient:
             return
         
         self.model = OPENAI_MODEL
-        self.base_url = OPENAI_BASE_URL
+        self.base_url = OPENAI_API_BASE_URL
         self.api_key = OPENAI_API_KEY
         self.virtual_key = VIRTUAL_KEY
         self.client = self.init_client()

@@ -29,7 +29,7 @@ User = get_user_model()
 # Create your views here.
 
 class CSRFTokenView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = (AllowAny,)
 
     @method_decorator(ensure_csrf_cookie)
     def get(self, request):
@@ -50,8 +50,9 @@ class CurrentUserView(APIView):
             }
         )
 
+
 class RegisterView(ModelViewSet):
-    permission_classes = [AllowAny]
+    permission_classes = (AllowAny, )
 
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request, *args, **kwargs):
@@ -136,14 +137,10 @@ class RegisterView(ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-        
-
-        
-
 
 class LoginView(APIView):
-    permission_classes = [AllowAny]
-    throttle_classes = [LoginRateThrottle]
+    permission_classes = (AllowAny,)
+    throttle_classes = (LoginRateThrottle,)
 
     @extend_schema(
         request=LoginSerializer,
@@ -167,7 +164,3 @@ class LoginView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
-    
-    
-
